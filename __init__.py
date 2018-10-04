@@ -1,13 +1,73 @@
 # move with BlockNinja
+from subprocess import Popen, PIPE, TimeoutExpired, STDOUT
+import json
+import traceback
 import requests
+import time
 from requests.auth import HTTPDigestAuth, HTTPBasicAuth
 import threading
+import atexit
+
+class Node:
+	def __init__(self, symbol, protocol, nodepath=None, port=None, name=None, password=None, customArgs=None):
+		self.symbol = symbol
+		self.protocol = protocol
+		self.nodepath = nodepath
+		self.port = port
+		self.name = name
+		self.password = password
+		self.customArgs = customArgs if customArgs else []
+		self.state = False
+	def getProcessArgs(self):
+		if not self.nodepath:
+			return BlockError("no.node.path", "Cannot calculate process arguments because the %s Node object has not been assigned a node path." % self.symbol)
+		args = [self.nodepath]
+		# -rpcuser wmuser -rpcpassword wmpwd123321 -port %i"
+		if self.protocol == "btc":
+			args.extend([
+				"-server", 
+				"-printtoconsole"
+			])
+			if self.name:
+				args.append("-rpcuser=%s" % self.name)
+			if self.password:
+				args.append("-rpcpassword=%s" % self.password)
+			if self.port:
+				args.append("-rpcport=%i" % self.port)
+		elif self.protocol == "xmr":
+			args.append("--log-level=1")
+			# "--limit-rate-up=1" # kB/s upload limit
+			if self.port:
+				args.append("--rpc-bind-port=%i" % self.port)
+			if self.name and self.password:
+				args.append("--rpc-login=%s:%s" % ( self.name, self.password))
+		else:
+			self.msgCallback("Unrecognized rpc protocol for %s" % symbol)
+			return BlockError("unknown.protocol", "(code 3) Unknown RPC protocol for %s: %s" % (symbol, self.protocol))
+		args.extend(self.customArgs)
+		return args
+
+	# "state": False,
+	# 		"name": "wmuser",
+	# 		"password": "wmpwd123321"
+	# 	}
+	# 	symbolDict = {}
+	# 	symbolDict["BTG"] = recursiveUpdate(dict(seed), {
+	# 		"node.path": "/home/buck/crypto/btg/bin/bgoldd",
+	# 		"rpc.protocol":"btc",
+	# 		"port":10456,
+	# 		"addnode.list": "https://status.bitcoingold.org/dl.php?format=config", 
+	# 		"custom.args": []
 
 class BlockNinja:
-	def __init__(self, symbolInfo, testnet=False):
+	def __init__(self, nodes=None):
 		self.id = 0
 		self.remoteNodes = set()
 		self.nodeProcesses = {}
+		self.nodes = {}
+		if isinstance(nodes, list):
+			for node in nodes:
+				self.nodes[node.symbol] = node
 		self.threads = []
 		self.nodeOn = lambda s: None
 		self.nodeOff = lambda s: None
@@ -15,25 +75,255 @@ class BlockNinja:
 		self.outputPaused = False
 		self.msgCallback = lambda s: None    # self.logMessageSignal.emit
 		self.outputCallback = lambda s, m: None
-		self.symbolInfo = symbolInfo
 		self.xmrTranslator = {
 			"getinfo":"get_info", 
 			"getblock":"get_block"
 		}
+		self.prepareRpcCalls()
+	def prepareRpcCalls(self):
 		callGenerator = self.makeRpcCall
-		self.getNethash = callGenerator("getnetworkhashps")
-		self.getPeerInfo = callGenerator("getpeerinfo")
-		self.getChainTips = callGenerator("getchaintips")
-		self.getBlockChainInfo = callGenerator("getblockchaininfo")
-		self.getBlock = callGenerator("getblock")
-		self.getBlockHash = callGenerator("getblockhash")
-		self.getInfo = callGenerator("getinfo")
-		self.getBlockHeaderbyHeight = callGenerator("get_block_header_by_height")
-		self.getLastBlockHeader = callGenerator("get_last_block_header")
-		self.getBlockHeadersRange = callGenerator("get_block_headers_range")
+		calls = """AddMultiSigAddress
+		AddNode
+		AddWitnessAddress
+		BackupWallet
+		BumpFee
+		ClearBanned
+		CreateMultiSig
+		CreateRawTransaction
+		DecodeRawTransaction
+		DecodeScript
+		DisconnectNode
+		DumpPrivKey
+		DumpWallet
+		EncryptWallet
+		EstimateFee
+		EstimatePriority
+		FundRawTransaction
+		Generate
+		GenerateToAddress
+		GetAccountAddress
+		GetAccount
+		GetAddedNodeInfo
+		GetAddressesByAccount
+		GetBalance
+		GetBestBlockHash
+		GetBlock
+		GetBlockChainInfo
+		GetBlockCount
+		GetBlockHash
+		GetBlockHeader
+		GetBlockTemplate
+		GetChainTips
+		GetConnectionCount
+		GetDifficulty
+		GetGenerate
+		GetHashesPerSec
+		GetInfo
+		GetMemoryInfo
+		GetMemPoolAncestors
+		GetMemPoolDescendants
+		GetMemPoolEntry
+		GetMemPoolInfo
+		GetMiningInfo
+		GetNetTotals
+		GetNetworkHashPS
+		GetNetworkInfo
+		GetNewAddress
+		GetPeerInfo
+		GetRawChangeAddress
+		GetRawMemPool
+		GetRawTransaction
+		GetReceivedByAccount
+		GetReceivedByAddress
+		GetTransaction
+		GetTxOut
+		GetTxOutProof
+		GetTxOutSetInfo
+		GetUnconfirmedBalance
+		GetWalletInfo
+		GetWork
+		Help
+		ImportAddress
+		ImportMulti
+		ImportPrivKey
+		ImportPrunedFunds
+		ImportWallet
+		KeyPoolRefill
+		ListAccounts
+		ListAddressGroupings
+		ListBanned
+		ListLockUnspent
+		ListReceivedByAccount
+		ListReceivedByAddress
+		ListSinceBlock
+		ListTransactions
+		ListUnspent
+		LockUnspent
+		Move
+		Ping
+		PreciousBlock
+		PrioritiseTransaction
+		PruneBlockChain
+		RemovePrunedFunds
+		SendFrom
+		SendMany
+		SendRawTransaction
+		SendToAddress
+		SetAccount
+		SetBan
+		SetGenerate
+		SetNetworkActive
+		SetTxFee
+		SignMessage
+		SignMessageWithPrivKey
+		SignRawTransaction
+		Stop
+		SubmitBlock
+		ValidateAddress
+		VerifyChain
+		VerifyMessage
+		VerifyTxOutProof
+		WalletLock
+		WalletPassphrase
+		WalletPassphraseChange"""
+		
+		for call in [c.strip() for c in calls.split("\n")]:
+			callGenerator(call)
+		self.getNethash = self.getNetworkHashPS
+
+		zecCalls = """z_GetBalance
+		z_GetTotalBalance
+		z_GetNewAddress
+		z_ListAddresses
+		z_ValidateAddress
+		z_ExportViewingKey
+		z_ImportViewingKey
+		z_ExportKey
+		z_ImportKey
+		z_ExportWallet
+		z_ImportWallet
+		z_GetOperationResult
+		z_GetOperationStatus
+		z_ListOperationIds
+		z_ListReceivedByAddress
+		z_ListUnspent
+		z_SendMany
+		z_ShieldCoinbase"""
+
+		for call in [c.strip() for c in zecCalls.split("\n")]:
+			lowerString = call.lower()
+			pythonedCall = "Z"+call.split("_")[1]
+			callGenerator(pythonedCall, lowerString, methodString=lowerString)
+
+
+		xmrCalls = """get_block_count
+		on_get_block_hash
+		get_block_template
+		submit_block
+		get_last_block_header
+		get_block_header_by_hash
+		get_block_header_by_height
+		get_block_headers_range
+		get_block
+		get_connections
+		get_info
+		hard_fork_info
+		set_bans
+		get_bans
+		flush_txpool
+		get_output_histogram
+		get_version
+		get_coinbase_tx_sum
+		get_fee_estimate
+		get_alternate_chains
+		relay_tx
+		sync_info
+		get_txpool_backlog
+		get_output_distribution
+		get_balance
+		get_address
+		get_address_index
+		create_address
+		label_address
+		get_accounts
+		create_account
+		label_account
+		get_account_tags
+		tag_accounts
+		untag_accounts
+		set_account_tag_description
+		get_height
+		transfer
+		transfer_split
+		sign_transfer
+		submit_transfer
+		sweep_dust
+		sweep_all
+		sweep_single
+		relay_tx
+		store
+		get_payments
+		get_bulk_payments
+		incoming_transfers
+		query_key
+		make_integrated_address
+		split_integrated_address
+		stop_wallet
+		rescan_blockchain
+		set_tx_notes
+		get_tx_notes
+		set_attribute
+		get_attribute
+		get_tx_key
+		check_tx_key
+		get_tx_proof
+		check_tx_proof
+		get_spend_proof
+		check_spend_proof
+		get_reserve_proof
+		check_reserve_proof
+		get_transfers
+		get_transfer_by_txid
+		sign
+		verify
+		export_outputs
+		import_outputs
+		export_key_images
+		import_key_images
+		make_uri
+		parse_uri
+		get_address_book
+		add_address_book
+		delete_address_book
+		refresh
+		rescan_spent
+		start_mining
+		stop_mining
+		get_languages
+		create_wallet
+		open_wallet
+		close_wallet
+		change_wallet_password
+		is_multisig
+		prepare_multisig
+		make_multisig
+		export_multisig_info
+		import_multisig_info
+		finalize_multisig
+		sign_multisig
+		submit_multisig
+		get_version"""
+
+		for call in [c.strip() for c in xmrCalls.split("\n")]:
+			callParts = call.split("_")
+			cappedMethod = "".join([x.capitalize() for x in callParts])
+			lowerMethod = "".join(callParts)
+			if not hasattr(self, lowerMethod):
+				callGenerator(cappedMethod, call)
+			self.xmrTranslator[lowerMethod] = call
 	def shutdown(self):
-		for symbol, info in self.symbolInfo.items():
-			info["state"] = False
+		for symbol, node in self.nodes.items():
+			node.state = False
 		for symbol, nodeProcess in self.nodeProcesses.items():
 			nodeProcess.kill()
 		tStart = time.time()
@@ -47,6 +337,8 @@ class BlockNinja:
 			if not oldThread.is_alive():
 				self.threads.remove(oldThread)
 		self.threads.append(thread)
+	def registerNode(self, symbol, protocol, **kwargs):
+		self.nodes[symbol] = Node(symbol, protocol, **kwargs)
 	def getId(self):
 		self.id += 1
 		return str(self.id)
@@ -60,7 +352,7 @@ class BlockNinja:
 			self.nodeProcesses[symbol].kill()
 	def startNode(self, symbol):
 		if symbol in self.remoteNodes:
-			args = self.getProcessArgs(symbol)
+			args = self.nodes[symbol].getProcessArgs()
 			if args:
 				self.msgCallback("You have specified %s as a remote node. Use the following command to start the node from a command prompt.")
 				self.msgCallback(" ".join(args))
@@ -75,41 +367,17 @@ class BlockNinja:
 		return True
 	def setNodeRemote(self, symbol):
 		self.msgCallback("Setting %s as a remote node" % symbol)
-		args = self.getProcessArgs(symbol)
+		args = self.nodes[symbol].getProcessArgs()
 		if args:
 			self.msgCallback("Use the following command to start the node at a command prompt")
 			self.msgCallback(" ".join(args))
 		self.remoteNodes.add(symbol)
-	def getProcessArgs(self, symbol):
-		symbolInfo = self.symbolInfo[symbol]
-		args = [symbolInfo["node.path"]]
-		# -rpcuser wmuser -rpcpassword wmpwd123321 -port %i"
-		if symbolInfo["rpc.protocol"] == "btc":
-			args.extend([
-				"-server", 
-				"-rpcuser=%s" % symbolInfo["name"], 
-				"-rpcpassword=%s" % symbolInfo["password"], 
-				"-rpcport=%i" % symbolInfo["port"],
-				"-printtoconsole"
-			])
-		elif symbolInfo["rpc.protocol"] == "xmr":
-			args.extend([
-				"--log-level=1",
-				"--rpc-bind-port=%i" % symbolInfo["port"],
-				"--rpc-login=%s:%s" % ( symbolInfo["name"], symbolInfo["password"]),
-				"--limit-rate-up=1" # kB/s upload limit 
-			])
-		else:
-			self.msgCallback("Unrecognized rpc protocol for %s" % symbol)
-			return BlockError("unknown.protocol", "(code 3) Unknown RPC protocol for %s: %s" % (symbol, symbolInfo["rpc.protocol"]))
-		args.extend(symbolInfo["custom.args"])
-		return args
 	def actuallyStartNode(self, symbol):
-		symbolInfo = self.symbolInfo[symbol]
+		node = self.nodes[symbol]
 		if symbol in self.nodeProcesses:
 			nodeProcess = self.nodeProcesses[symbol]
 			if nodeProcess.poll() == None:
-				symbolInfo["state"] = False
+				node.state = False
 				self.msgCallback("Killing %s node" % symbol)
 				nodeProcess.kill()
 				tStart = time.time()
@@ -124,19 +392,20 @@ class BlockNinja:
 					self.msgCallback("Failed to kill %s node. " % symbol)
 					return BlockError("zombie.node", "Failed to kill node for %s" % symbol)
 		self.msgCallback("Starting node for %s" % symbol)
-		symbolInfo["state"] = True
-		args = self.getProcessArgs(symbol)
+		node.state = True
+		args = self.nodes[symbol].getProcessArgs()
 		if not args:
 			self.msgCallback("Could not retreive process arguments for %s. " % symbol)
 			return BlockError("args.error", "Unable to find calculate process arguments for %s." % symbol)
 		nodeProcess = self.nodeProcesses[symbol] = Popen(args, stdout=PIPE, stderr=STDOUT)
+		atexit.register(nodeProcess.terminate)
 		nodeProcess.peers = 0
 		nodeProcess.queuedCalls = []
 		lineBuffer = []
 		self.makeThread(popenReader, nodeProcess.stdout, lineBuffer)
 		self.nodeOn(symbol)
 		while True:
-			if not symbolInfo["state"]:
+			if not node.state:
 				break
 			if lineBuffer:
 				self.outputCallback(symbol, lineBuffer.pop())
@@ -148,7 +417,7 @@ class BlockNinja:
 				except TimeoutExpired as e:
 					continue
 				except Exception as e:
-					self.msgCallback("Error encounter in node loop: %s \n %s" % (repr(e), traceback.print_tb(e.__traceback__)))
+					self.msgCallback("Error encountered in node loop: %s \n %s" % (repr(e), traceback.print_tb(e.__traceback__)))
 					break
 		# Clean up any remaining lines
 		for line in lineBuffer:
@@ -169,11 +438,13 @@ class BlockNinja:
 	# Base Routines
 	###############
 	def rpc(self, symbol, method, *listParams, **dictParams):
+		print("--running %s" % method)
+
 		nodeStatus = self.nodeIsRunning(symbol)
 		if not nodeStatus:
 			return nodeStatus
 
-		symbolInfo = self.symbolInfo[symbol]
+		node = self.nodes[symbol]
 		# params["jsonrpc"] = "2.0"
 		request = {}
 		request["method"] = method
@@ -184,15 +455,15 @@ class BlockNinja:
 			'User-Agent': "BlockNinja/0.1",
 			'Content-type': 'application/json'
 		}
-		if symbolInfo["rpc.protocol"] == "btc":
-			auth = HTTPBasicAuth(symbolInfo["name"], symbolInfo["password"])
-			url = "http://127.0.0.1:%i" % symbolInfo["port"]
-		elif symbolInfo["rpc.protocol"] == "xmr":
+		if node.protocol == "btc":
+			auth = HTTPBasicAuth(node.name, node.password)
+			url = "http://127.0.0.1:%i" % node.port
+		elif node.protocol == "xmr":
 			translator = self.xmrTranslator
 			if method in translator:
 				request["method"] = translator[method]
-			auth = HTTPDigestAuth(symbolInfo["name"], symbolInfo["password"])
-			url = "http://127.0.0.1:%i/json_rpc" % symbolInfo["port"]
+			auth = HTTPDigestAuth(node.name, node.password)
+			url = "http://127.0.0.1:%i/json_rpc" % node.port
 
 		data = json.dumps(request)
 		self.msgCallback("-> %s: %s" % (symbol, data))
@@ -205,14 +476,6 @@ class BlockNinja:
 			)
 			response = rawResponse.json()
 
-		# authpair = "%s:%s" % (symbolInfo["name"], symbolInfo["password"])
-		# headers['Authorization'] = b"Basic " + base64.b64encode(authpair.encode('utf8'))
-		# rawResponse = ""
-		# try:
-		# 	connection = httplib.HTTPConnection("127.0.0.1", port=symbolInfo["port"], timeout=10)
-		# 	connection.request('POST', "/", postdata, headers)
-		# 	rawResponse = connection.getresponse().read().decode("utf-8")
-		# 	response = json.loads(rawResponse)
 
 			if "result" not in response:
 				return BlockError("response.format.error", "No result field found in: %s" % rawResponse.text)
@@ -229,23 +492,41 @@ class BlockNinja:
 		except ValueError as e:
 			return BlockError("json.decode.error", "Unable to decode response: %s" % rawResponse.text)
 		except Exception as e:
-			return BlockError("rpc.exception", "Error encounter for %s request: %s \n %s" % (method, repr(e), traceback.print_tb(e.__traceback__)))
+			return BlockError("rpc.exception", "Error encountered for %s request: %s \n %s" % (method, repr(e), traceback.print_tb(e.__traceback__)))
 	
 	def rpcCallWrapper(self, symbol, method, *args, **kwargs):
 		response = self.rpc(symbol, method, *args, **kwargs)
 		if not response:
 			return response
 		return response["result"]
-	def makeRpcCall(self, method):
+	def makeRpcCall(self, method, *aliases, methodString=None):
 		rpcFunc = self.rpcCallWrapper
-		return lambda s, *a, m=method, **k: rpcFunc(s,m,*a,**k)
+		lowerMethod = method.lower()
+		nippedMethod = method[:1].lower() + method[1:]
+		methodString = methodString if methodString else lowerMethod
+		f = lambda s, *a, m=methodString, **k: rpcFunc(s,m,*a,**k)
+		def f(*a, _m=methodString, _n=self.nodes, **k):
+			if not a:
+				return BlockError("no.symbol", "%s called without a symbol" % _m)
+			s = a[0]
+			if s not in _n:
+				return BlockError("unknown.symbol", "%s called without an unknown symbol: %s" % (_m, s))
+			return rpcFunc(s, _m, *a[1:], **k)
+		setattr(self, method, f)
+		if hasattr(self, nippedMethod):
+			print("--------WARNING: makeRpcCall overwriting existing method: %s" % nippedMethod)
+		setattr(self, nippedMethod, f)
+		setattr(self, lowerMethod, f)
+		for alias in aliases:
+			setattr(self, alias, f)
+		return f
 	# def _setNetHash(self, symbol, nethash):
 	# 	self.msgCallback("nethashes for %s set to %r" % (symbol, nethash))
 	###################
 	# Compound Routines
 	###################
 	def getBlockByHeight(self, symbol, height):
-		protocol = self.symbolInfo[symbol]["rpc.protocol"]
+		protocol = self.nodes[symbol].protocol
 		if protocol == "btc":
 			return self.getBlockByHeight_btc(symbol, height)
 		elif protocol == "xmr":
@@ -260,13 +541,14 @@ class BlockNinja:
 		return self.getBlock(symbol, blockhash)
 	def getBlockByHeight_xmr(self, symbol, height):
 		block = self.getBlockHeaderbyHeight(symbol, height=height)
+		# Should probably be translating this to the full block, as returned by getBlock
 		if not block:
 			return block
 		block = block["block_header"]
 		block["time"] = block["timestamp"]
 		return block
 	def getTip(self, symbol):
-		protocol = self.symbolInfo[symbol]["rpc.protocol"]
+		protocol = self.nodes[symbol].protocol
 		if protocol == "btc":
 			return self.getTip_btc(symbol)
 		elif protocol == "xmr":
@@ -306,7 +588,7 @@ class BlockNinja:
 		"""
 		Get the nethash avg for the top block at height, for backranges of 1,2,4,8,16,32,64,128
 		"""
-		protocol = self.symbolInfo[symbol]["rpc.protocol"]
+		protocol = self.nodes[symbol].protocol
 		if protocol == "btc":
 			return self.getNethashPts_btc(symbol, height, avgLengths)
 		elif protocol == "xmr":
@@ -375,7 +657,6 @@ class BlockNinja:
 				return g-1
 			return g
 		while True:
-			print("Grabbing block %i" % guess)
 			block = self.getBlockByHeight(symbol, guess)
 			if not block:
 				return block
@@ -436,3 +717,13 @@ class BlockError:
 		self.response = response
 	def __bool__(self):
 		return False
+	def __repr__(self):
+		return("BlockError(%r, %r)" % (self.errorType, self.errorMessage))
+
+def popenReader(streamPointer, lineBuffer):
+	while True:
+		line = streamPointer.readline()
+		if line:
+			lineBuffer.append(line.decode('utf-8'))
+		else:
+			break
