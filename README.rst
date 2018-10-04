@@ -14,6 +14,12 @@ closes all node processes on exit.
 Parameters can be passed to individual RPC calls as positional or keyword arguments. If any positional arguments are passed, keyword arguments are ignored and the parameters field of the JSON request will be a list. If only keyword arguments are passed, it will be an object (dictionary).
 
 ++++++++++++
+Installation
+++++++++++++
+
+Manually download into a folder named `blockninja` located either in the same directory as your Python script, or in a directory in your sys.path. Download directly or use `git clone https://github.com/StrataMiner/BlockNinja.git blockninja` from the command line. 
+
+++++++++++++
 Bitcoin core
 ++++++++++++
 All Bitcoin core JSON-RPC methods listed at https://bitcoin.org/en/developer-reference#bitcoin-core-apis are implemented
