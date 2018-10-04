@@ -1,14 +1,16 @@
 ==========
 BlockNinja
 ==========
-BlockNinja is a multi-protocol Python RPC client. 
+BlockNinja is a multi-protocol Python JSON-RPC client for communicating with cryptocurrency nodes. 
 BlockNinja has a Pythonized interface for all RPC methods for the Bitcoin and Monero core node protocols, 
-as well as the ZCash z\_ variants. Node processes can also be started and stopped with BlockNinja. It accepts 
+as well as the ZCash z\_ variants. 
+
+Node processes can also be started and stopped with BlockNinja. It accepts 
 custom command-line arguments, if desired. 
 
-New methods have also been implemented, e.g. `getBlockByHeight` and `getFirstBlockOfDay`.
+New methods have been implemented, e.g. `getBlockByHeight` and `getFirstBlockOfDay`, with more coming.
 
-BlockNinja can also connect to nodes running elsewhare. This is especially preferred during early application development because BlockNinja
+BlockNinja can also connect to nodes running elsewhere. This is especially preferred during early application development because BlockNinja
 closes all node processes on exit.
 
 Parameters can be passed to individual RPC calls as positional or keyword arguments. If any positional arguments are passed, keyword arguments are ignored and the parameters field of the JSON request will be a list. If only keyword arguments are passed, it will be an object (dictionary).
@@ -16,6 +18,8 @@ Parameters can be passed to individual RPC calls as positional or keyword argume
 ++++++++++++
 Installation
 ++++++++++++
+
+BlockNinja is still in development, but you can use it or contribute if you want. 
 
 Manually download into a folder named `blockninja` located either in the same directory as your Python script, or in a directory in your sys.path. Download directly or use `git clone https://github.com/StrataMiner/BlockNinja.git blockninja` from the command line. 
 
@@ -53,42 +57,25 @@ Example usage
 	from blockninja import BlockNinja
 	import json, time
 
-	symbolDict = {
-		"ZEC" : {
-			"name": "yourusername",
-			"password": "yourpassword",
-			"node.path": "/path/to/zcashd",
-			"rpc.protocol":"btc",
-			"port":10457,
-			"custom.args": []
-		},
-		"ZEN" : {
-			"name": "wmuser",
-			"password": "wmpwd123321",
-			"node.path": "zend",
-			"rpc.protocol":"btc",
-			"port":10459,
-			"addnode.list": None,
-			"custom.args": []
-		}
-	}
+	symbol = "ZEC"
 
 	blockNinja = BlockNinja()
-	for symbol, info in symbolDict.items():
-		blockNinja.registerNode(symbol, 
-			protocol = info["rpc.protocol"], 
-			nodepath = info["node.path"], 
-			port = info["port"], 
-			name = info["name"], 
-			password = info["password"], 
-			customArgs = info["custom.args"]
-		)
-	symbol = "ZEC"
+	blockNinja.msgCallback = lambda s: print(s)
+	blockNinja.registerNode(
+		symbol, 
+		protocol = "btc", # Required. One of ("btc","xmr"). Can be passed positionally.
+		nodepath = "/path/to/zcashd", 
+		port = 13579, 
+		name = "yourusername", 
+		password = "yourpassword123", 
+		customArgs = []
+	)
 	blockNinja.setNodeRemote(symbol)
-	input("Start the node with the command line arguments above. Then press enter.")
+
+	input("Start the node with the command above, then press enter.")
 
 	while True:
-		accounts = blockNinja.listAccounts(symbol), indent=4, sort_keys=True)
+		accounts = blockNinja.listAccounts(symbol)
 		if not accounts:
 			# if a BlockNinja result evaluates as false, it is a BlockError object
 			if accounts.errorType == "node.syncing":
